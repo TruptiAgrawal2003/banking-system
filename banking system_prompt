@@ -1,0 +1,284 @@
+import mysql.connector
+from mysql.connector import Error
+import random
+import re
+from datetime import datetime
+
+def create_connection():
+    try:
+        connection = mysql.connector.connect(
+            host='localhost',
+            user='root',
+            password='yourpassword',  # Replace with your MySQL password
+            database='banking_system'
+        )
+        if connection.is_connected():
+            print("Connected to the database")
+            return connection
+    except Error as e:
+        print(f"Error: {e}")
+        return None
+
+
+def generate_account_number():
+    return str(random.randint(1000000000, 9999999999))
+
+def validate_email(email):
+    pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+    return re.match(pattern, email) is not None
+
+def validate_phone(phone):
+    return len(phone) == 10 and phone.isdigit()
+
+def validate_password(password):
+    # Password should be at least 8 characters, contain 1 uppercase, 1 lowercase, and 1 number
+    return len(password) >= 8 and \
+           any(c.isupper() for c in password) and \
+           any(c.islower() for c in password) and \
+           any(c.isdigit() for c in password)
+
+def validate_balance(balance):
+    return balance >= 2000
+
+def add_user(name, dob, city, contact_number, email, address, password, initial_balance):
+    if not validate_email(email):
+        print("Invalid email format!")
+        return
+    if not validate_phone(contact_number):
+        print("Invalid contact number!")
+        return
+    if not validate_password(password):
+        print("Password must be at least 8 characters, containing 1 uppercase letter, 1 lowercase letter, and 1 number.")
+        return
+    if not validate_balance(initial_balance):
+        print("Initial balance must be at least 2000!")
+        return
+
+    account_number = generate_account_number()
+
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT * FROM users WHERE account_number = %s", (account_number,))
+        if cursor.fetchone():
+            print("Account number already exists! Generating a new one.")
+            connection.close()
+            return add_user(name, dob, city, contact_number, email, address, password, initial_balance)
+
+        cursor.execute("""
+        INSERT INTO users (name, account_number, dob, city, contact_number, email, address, balance)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (name, account_number, dob, city, contact_number, email, address, initial_balance))
+        cursor.execute("""
+        INSERT INTO login (user_id, password)
+        SELECT user_id, %s FROM users WHERE account_number = %s
+        """, (password, account_number))
+        connection.commit()
+        print("User added successfully!")
+        connection.close()
+
+
+def login(account_number, password):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("""
+        SELECT u.user_id, u.name, l.password FROM users u
+        JOIN login l ON u.user_id = l.user_id
+        WHERE u.account_number = %s
+        """, (account_number,))
+        result = cursor.fetchone()
+        if result and result[2] == password:
+            print(f"Login successful! Welcome, {result[1]}")
+            return result[0]  # Return user_id
+        else:
+            print("Invalid account number or password.")
+            return None
+
+
+def show_balance(user_id):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
+        balance = cursor.fetchone()
+        if balance:
+            print(f"Your balance is: {balance[0]}")
+        connection.close()
+
+
+def credit_amount(user_id, amount):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s", (amount, user_id))
+        cursor.execute("""
+        INSERT INTO transactions (user_id, transaction_type, amount)
+        VALUES (%s, 'credit', %s)
+        """, (user_id, amount))
+        connection.commit()
+        print(f"{amount} credited to your account.")
+        connection.close()
+
+
+def debit_amount(user_id, amount):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
+        balance = cursor.fetchone()
+        if balance and balance[0] >= amount:
+            cursor.execute("UPDATE users SET balance = balance - %s WHERE user_id = %s", (amount, user_id))
+            cursor.execute("""
+            INSERT INTO transactions (user_id, transaction_type, amount)
+            VALUES (%s, 'debit', %s)
+            """, (user_id, amount))
+            connection.commit()
+            print(f"{amount} debited from your account.")
+        else:
+            print("Insufficient balance!")
+        connection.close()
+
+
+def transfer_amount(user_id, target_account_number, amount):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
+        balance = cursor.fetchone()
+        if balance and balance[0] >= amount:
+            cursor.execute("SELECT user_id FROM users WHERE account_number = %s", (target_account_number,))
+            target_user = cursor.fetchone()
+            if target_user:
+                cursor.execute("UPDATE users SET balance = balance - %s WHERE user_id = %s", (amount, user_id))
+                cursor.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s", (amount, target_user[0]))
+                cursor.execute("""
+                INSERT INTO transactions (user_id, transaction_type, amount, target_account_number)
+                VALUES (%s, 'transfer', %s, %s)
+                """, (user_id, amount, target_account_number))
+                connection.commit()
+                print(f"{amount} transferred to account {target_account_number}.")
+            else:
+                print("Target account does not exist!")
+        else:
+            print("Insufficient balance!")
+        connection.close()
+
+def update_profile(user_id, contact_number=None, email=None, address=None):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        if contact_number:
+            cursor.execute("UPDATE users SET contact_number = %s WHERE user_id = %s", (contact_number, user_id))
+        if email:
+            cursor.execute("UPDATE users SET email = %s WHERE user_id = %s", (email, user_id))
+        if address:
+            cursor.execute("UPDATE users SET address = %s WHERE user_id = %s", (address, user_id))
+        connection.commit()
+        print("Profile updated successfully.")
+        connection.close()
+
+def deactivate_account(user_id):
+    connection = create_connection()
+    if connection:
+        cursor = connection.cursor()
+        cursor.execute("UPDATE users SET status = 'inactive' WHERE user_id = %s", (user_id,))
+        connection.commit()
+        print("Account deactivated successfully.")
+        connection.close()
+
+
+def logout():
+    print("Logging out...")
+    # Implement logout functionality as needed (clear session or data)
+
+def main_menu():
+    while True:
+        print("\n=== BANKING SYSTEM ===")
+        print("1. Add User")
+        print("2. Show User")
+        print("3. Login")
+        print("4. Exit")
+
+        choice = input("Enter your choice: ")
+
+        if choice == '1':
+            name = input("Enter Name: ")
+            dob = input("Enter DOB (YYYY-MM-DD): ")
+            city = input("Enter City: ")
+            contact_number = input("Enter Contact Number: ")
+            email = input("Enter Email: ")
+            address = input("Enter Address: ")
+            password = input("Create Password: ")
+            initial_balance = int(input("Enter Initial Balance (minimum 2000): "))
+
+            add_user(name, dob, city, contact_number, email, address, password, initial_balance)
+
+        elif choice == '2':
+            connection = create_connection()
+            if connection:
+                cursor = connection.cursor()
+                cursor.execute("SELECT * FROM users")
+                users = cursor.fetchall()
+                print("\n=== Users Information ===")
+                for user in users:
+                    print(f"Name: {user[1]}, Account Number: {user[2]}, DOB: {user[3]}, City: {user[4]}, "
+                          f"Contact: {user[5]}, Email: {user[6]}, Address: {user[7]}, Balance: {user[8]}")
+                connection.close()
+
+        elif choice == '3':
+            account_number = input("Enter Account Number: ")
+            password = input("Enter Password: ")
+            user_id = login(account_number, password)
+            if user_id:
+                user_menu(user_id)
+
+        elif choice == '4':
+            print("Exiting the application...")
+            break
+
+        else:
+            print("Invalid choice. Please try again.")
+
+def user_menu(user_id):
+    while True:
+        print("\n=== USER MENU ===")
+        print("1. Show Balance")
+        print("2. Credit Amount")
+        print("3. Debit Amount")
+        print("4. Transfer Amount")
+        print("5. Update Profile")
+        print("6. Deactivate Account")
+        print("7. Logout")
+
+        choice = input("Enter your choice: ")
+
+        if choice == '1':
+            show_balance(user_id)
+        elif choice == '2':
+            amount = float(input("Enter amount to credit: "))
+            credit_amount(user_id, amount)
+        elif choice == '3':
+            amount = float(input("Enter amount to debit: "))
+            debit_amount(user_id, amount)
+        elif choice == '4':
+            target_account_number = input("Enter target account number: ")
+            amount = float(input("Enter amount to transfer: "))
+            transfer_amount(user_id, target_account_number, amount)
+        elif choice == '5':
+            contact_number = input("Enter new contact number (leave blank to skip): ")
+            email = input("Enter new email (leave blank to skip): ")
+            address = input("Enter new address (leave blank to skip): ")
+            update_profile(user_id, contact_number if contact_number else None,
+                           email if email else None, address if address else None)
+        elif choice == '6':
+            deactivate_account(user_id)
+        elif choice == '7':
+            logout()
+            break
+        else:
+            print("Invalid choice. Please try again.")
+
+if __name__ == "__main__":
+    main_menu()
+
