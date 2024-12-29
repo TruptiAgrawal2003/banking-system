@@ -1,0 +1,32 @@
+CREATE DATABASE banking_system;
+USE banking_system;
+
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    account_number VARCHAR(10) UNIQUE NOT NULL,
+    dob DATE NOT NULL,
+    city VARCHAR(255),
+    contact_number VARCHAR(15) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    address TEXT,
+    balance DECIMAL(15,2) DEFAULT 0.00,
+    status ENUM('active', 'inactive') DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE login (
+    user_id INT,
+    password VARCHAR(255) NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE transactions (
+    transaction_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    transaction_type ENUM('credit', 'debit', 'transfer') NOT NULL,
+    amount DECIMAL(15,2) NOT NULL,
+    transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    target_account_number VARCHAR(10),  -- Used for transfer type
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
